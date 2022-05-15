@@ -1,3 +1,6 @@
+'''Delete duplicate music files
+'''
+
 import re
 from pathlib import Path
 from typing import List, Set

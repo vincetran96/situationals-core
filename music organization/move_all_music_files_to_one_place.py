@@ -1,3 +1,6 @@
+'''Move all music files to one place
+'''
+
 import shutil
 from pathlib import Path
 from typing import List

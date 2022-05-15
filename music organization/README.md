@@ -12,10 +12,10 @@ Hello.mp3
 Hello 1.mp3
 Hello 2.mp3
 ```
-All these files are in the same folder. Then use `delete duplicate music files.py`
+All these files are in the same folder. Then use `delete_duplicate_music_files.py`
 
 #### 2. Move all music files in sub-directories to just one directory
-Use `move all music files to one place.py`
+Use `move_all_music_files_to_one_place.py`
 
 ## Command
 - Change the path names in the file you choose to run
