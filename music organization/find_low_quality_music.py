@@ -24,7 +24,6 @@ parser.add_argument(
     default=128,
     help="Bitrate threshold for low quality music (in KBPS)"
 )
-
 args = parser.parse_args()
 music_path_str = args.music_path
 low_quality_bit_rate = args.bitrate
