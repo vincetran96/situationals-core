@@ -10,6 +10,22 @@ from pathlib import Path
 from eyed3 import mp3
 
 
+def sanitize_title_artist(title_artist: str):
+    '''Sanitizes title artist string
+    to improve the neutrality of the track name
+    '''
+    forbidden_words = [
+        "extended mix",
+        "extended version",
+        "radio edit",
+        "extended edit",
+        "original mix"
+    ]
+    for word in forbidden_words:
+        title_artist = title_artist.replace(word, "")
+
+    return title_artist
+
 # Logging
 logging.basicConfig(level=logging.ERROR)
 
@@ -24,9 +40,16 @@ parser.add_argument(
     default=128,
     help="Bitrate threshold for low quality music (in KBPS)"
 )
+parser.add_argument(
+    "--lq_folder",
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    help="Whether to move all low quality files to a folder"
+)
 args = parser.parse_args()
 music_path_str = args.music_path
 low_quality_bit_rate = args.bitrate
+is_lq_folder = args.lq_folder
 print(f"Scanning for low-quality music files in {music_path_str}")
 print(f"Low quality bitrate set to {low_quality_bit_rate} KBPS")
 
@@ -35,7 +58,10 @@ music_path = Path(music_path_str)
 low_quality_path = music_path.joinpath("low_quality")
 low_quality_path.mkdir(parents=True, exist_ok=True)
 
-# Mapping of filename to words in its filename
+# Mapping of filename to words in its filename;
+#   The keys for these maps are the actual filenames
+#   because they're the only identifiers of them for
+#   me in Windows
 all_music_words_map = {}
 low_quality_words_map = {}
 words_regex = re.compile(r"(\w[\w']*\w|\w)")
@@ -54,18 +80,37 @@ for music_file in music_path.rglob("*.mp3"):
     base_file_name = music_file.name
     core_file_name = music_file.stem
     file_words = words_regex.findall(core_file_name.lower())
-    all_music_words_map[core_file_name] = file_words
 
     # Find low quality, make mapping, and move
+    # The default title of the mp3 file are from file_words;
+    # If there is a title tag, use that instead
     mp3_file = mp3.Mp3AudioFile(music_file)
     bit_rate = int(re.search(bit_rate_regex, mp3_file.info.bit_rate_str).group(0))
+    mp3_tags = mp3_file.tag
+    mp3_title = " ".join(file_words)
+    if mp3_tags.title:
+        mp3_title = mp3_tags.title.lower()
+    mp3_artist = ""
+    if mp3_tags.artist:
+        mp3_artist = mp3_tags.artist.lower()
+
+    # Construct a unified string of title + artist
+    #   to be used in Deezer download later;
+    # It has to be sanitized of forbidden words
+    #   so that Deezer can find them
+    title_artist = mp3_title + " " + mp3_artist
+    sanitized_title_artist = sanitize_title_artist(title_artist)
+    all_music_words_map[core_file_name] = sanitized_title_artist
 
     if bit_rate <= low_quality_bit_rate:
-        low_quality_words_map[core_file_name] = file_words
+        # low_quality_words_map[core_file_name] = file_words
+        low_quality_words_map[core_file_name] = sanitized_title_artist
         print(
-            f"File {base_file_name} is low-quality, moving it to {low_quality_path}"
+            f"File {base_file_name} is low-quality; It is: {sanitized_title_artist}"
         )
-        shutil.move(music_file, low_quality_path.joinpath(base_file_name))
+        if is_lq_folder:
+            print(f"Moving it to {low_quality_path}")
+            shutil.move(music_file, low_quality_path.joinpath(base_file_name))
 
 # Write words map to JSON
 print("Dumping words map to JSON")

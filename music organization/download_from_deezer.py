@@ -3,8 +3,11 @@
 
 import json
 import argparse
+from pathlib import Path
+
 import streamrip
 from dotenv import dotenv_values
+from thefuzz import fuzz
 
 
 # Dotenv values
@@ -18,30 +21,102 @@ parser.add_argument(
     help="Path to JSON file containing tracks to download; see example_deezer_dl.json"
 )
 parser.add_argument(
+    "log_path",
+    help="Path to where to contain the log file"
+)
+parser.add_argument(
     "--arl",
     help="Your Deezer ARL; not required if you have the ARL in the .env file"
 )
 args = parser.parse_args()
-tracks_json_path = args.tracks_json
+tracks_json_path_str = args.tracks_json
+log_path_str = args.log_path
 deezer_arl = args.arl or dotenvs['DEEZER_ARL']
+if not deezer_arl:
+    raise ValueError("Deezer ARL must be provided")
 
-# Load tracks list from JSON
-with open(tracks_json_path, "r", encoding="utf-8") as tracks_jsonfile:
-    tracks_dict = json.load(tracks_jsonfile)
+# Load original (OG) tracks from JSON
+# The JSON contains keys as OG filename,
+#   and OG token (title + artist)
+tracks_json_path = Path(tracks_json_path_str)
+tracks_json_path_parent = tracks_json_path.parent
+with open(tracks_json_path_str, "r", encoding="utf-8") as tracks_jsonfile:
+    og_tracks_dict = json.load(tracks_jsonfile)
 
 # Deezer client
 deezer_client = streamrip.clients.DeezerClient()
 deezer_client.login(arl=deezer_arl)
 
-# Do a search for each track then download
-for track in tracks_dict['tracks']:
-    result = deezer_client.search(track, media_type="track")
-    top_result = streamrip.media.Track(
-        client=deezer_client,
-        id=result['data'][0]['id'],
-        part_of_tracklist=True
-    )
-    top_result.load_meta()
+# Logs
+log_path = Path(log_path_str)
 
-    print(f"Downloading {top_result}")
-    top_result.download(quality=1)
+# Do a search for each track then download;
+# Use a try-except block to prevent interruption
+#   and log erroneous tracks to a file
+# Only attempt to look into the first 5 results;
+#   For each track, compare the deezer token (title + artist)
+#   to its OG token to see how similar they are,
+#   and the threshold is 70%,
+#   then write the loggings to a file
+MAX_SIMILARITY_SCORE = 0.7 * 100 + 0.3 * (100 + 100)
+SIMILARITY_SCORE_THRESHOLD = 0.7
+LOG_DELIMITER = "\t"
+processed_filenames = []
+for filename, og_token in og_tracks_dict.items():
+    result = deezer_client.search(og_token, media_type="track")
+    try:
+        dz_downloaded_tracks = []
+        if result:
+            print(f"Found results for {og_token}")
+            dz_5_tracks = result['data'][:5]
+            for dz_track_dict in dz_5_tracks:
+                dz_token = dz_track_dict['title'] + " " + dz_track_dict['artist']['name']
+                token_set_ratio = fuzz.token_set_ratio(og_token, dz_token)
+                token_sort_ratio = fuzz.token_sort_ratio(og_token, dz_token)
+                token_partial_ratio = fuzz.token_set_ratio(og_token, dz_token)
+                similarity_score = \
+                    0.7 * token_set_ratio \
+                    + 0.3 * (token_sort_ratio + token_partial_ratio)
+                similarity_score_ratio = similarity_score / MAX_SIMILARITY_SCORE
+
+                # Proceed to download the track if similarity score
+                # meets threshold
+                if similarity_score_ratio >= SIMILARITY_SCORE_THRESHOLD:
+                    print(
+                        f"Similarity score met threshold, downloading {dz_track_dict['title']} - {dz_track_dict['artist']['name']}"
+                    )
+                    top_result = streamrip.media.Track(
+                        client=deezer_client,
+                        id=dz_track_dict['id'],
+                        part_of_tracklist=True
+                    )
+                    top_result.load_meta()
+                    top_result.download(quality=1)
+                    dz_downloaded_tracks.append(
+                        dz_token + f" - ID: {dz_track_dict['id']}"
+                    )
+        with open(
+            log_path.joinpath("deezer_downloads.txt"), "a", encoding="utf-8"
+        ) as logfile:
+            logfile.write(
+                filename \
+                + LOG_DELIMITER \
+                + str(dz_downloaded_tracks) \
+                + "\n"
+            )
+        processed_filenames.append(filename)
+    except Exception as exc:
+        print("Dumping remaining files to JSON words map")
+        og_tracks_dict_remaining = {
+            filename: og_token for filename, og_token in og_tracks_dict.items() \
+                if filename not in processed_filenames
+        }
+        with open(
+            tracks_json_path_parent.joinpath(
+                "remaining.json"
+            ),
+            "w",
+            encoding="utf-8"
+        ) as remaining_file:
+            json.dump(og_tracks_dict_remaining, remaining_file)
+        raise exc
