@@ -3,6 +3,7 @@
 
 import json
 import argparse
+import re
 from pathlib import Path
 
 import streamrip
@@ -63,17 +64,19 @@ SIMILARITY_SCORE_THRESHOLD = 0.7
 LOG_DELIMITER = "\t"
 processed_filenames = []
 for filename, og_token in og_tracks_dict.items():
-    result = deezer_client.search(og_token, media_type="track")
     try:
+        # Token must be sanitized so Deezer can search
+        sanitized_og_token = re.sub(r'[^A-Za-z0-9 ]+', '', og_token)
+        
+        result = deezer_client.search(sanitized_og_token, media_type="track")
         dz_downloaded_tracks = []
         if result:
-            print(f"Found results for {og_token}")
             dz_5_tracks = result['data'][:5]
             for dz_track_dict in dz_5_tracks:
                 dz_token = dz_track_dict['title'] + " " + dz_track_dict['artist']['name']
-                token_set_ratio = fuzz.token_set_ratio(og_token, dz_token)
-                token_sort_ratio = fuzz.token_sort_ratio(og_token, dz_token)
-                token_partial_ratio = fuzz.token_set_ratio(og_token, dz_token)
+                token_set_ratio = fuzz.token_set_ratio(sanitized_og_token, dz_token)
+                token_sort_ratio = fuzz.token_sort_ratio(sanitized_og_token, dz_token)
+                token_partial_ratio = fuzz.token_set_ratio(sanitized_og_token, dz_token)
                 similarity_score = \
                     0.7 * token_set_ratio \
                     + 0.3 * (token_sort_ratio + token_partial_ratio)
@@ -105,7 +108,19 @@ for filename, og_token in og_tracks_dict.items():
                 + "\n"
             )
         processed_filenames.append(filename)
+    except streamrip.exceptions.ItemExists:
+        with open(
+            log_path.joinpath("deezer_downloads.txt"), "a", encoding="utf-8"
+        ) as logfile:
+            logfile.write(
+                filename \
+                + LOG_DELIMITER \
+                + str(dz_downloaded_tracks) \
+                + "\n"
+            )
+        processed_filenames.append(filename)
     except Exception as exc:
+        print(f"Exception on {filename}")
         print("Dumping remaining files to JSON words map")
         og_tracks_dict_remaining = {
             filename: og_token for filename, og_token in og_tracks_dict.items() \
